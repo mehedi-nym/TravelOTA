@@ -99,7 +99,7 @@ export function Footer() {
               </div>
               <div className="flex gap-3">
                 <Mail size={18} className="text-primary shrink-0" />
-                <span>support@travelgpt.com</span>
+                <span>support@travelota.com</span>
               </div>
             </div>
           </div>

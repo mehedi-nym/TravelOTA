@@ -71,7 +71,6 @@ export function TourPackageSearch() {
 
   return (
     <div className="space-y-12">
-      {/* --- MINIMALIST SEARCH BAR (Matches Visa Design) --- */}
       <div className="relative max-w-4xl mx-auto bg-white dark:bg-slate-900 rounded-[2rem] p-3 shadow-2xl border border-slate-100 dark:border-slate-800 flex flex-col md:flex-row items-center gap-2">
         <div className="flex-1 w-full relative">
           <Popover open={open} onOpenChange={setOpen}>
@@ -79,17 +78,22 @@ export function TourPackageSearch() {
               <Button
                 variant="ghost"
                 role="combobox"
-                className="w-full justify-start text-lg h-14 hover:bg-transparent px-6 font-medium"
+                className="w-full justify-start text-lg h-14 hover:bg-transparent px-6 font-medium transition-colors hover:text-[#14A7A2] group"
               >
                 <MapPin className="mr-3 h-5 w-5 text-primary shrink-0" />
                 {selectedCountryName ? selectedCountryName : "Find your next adventure..."}
               </Button>
             </PopoverTrigger>
-            <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0 rounded-2xl overflow-hidden border-none shadow-xl" align="start">
+            <PopoverContent 
+              side="bottom" 
+              sideOffset={10}
+              align="start"
+              className="w-[var(--radix-popover-trigger-width)] p-0 rounded-2xl overflow-hidden border-none shadow-xl"
+            >
               <Command>
                 <CommandInput placeholder="Search destination..." className="h-12" />
-                <CommandList>
-                  <CommandEmpty>Destination not found.</CommandEmpty>
+                <CommandList className="max-h-72">
+                  <CommandEmpty>Sorry! Destination not found.</CommandEmpty>
                   <CommandGroup>
                     {countries.map((country) => (
                       <CommandItem
@@ -99,7 +103,7 @@ export function TourPackageSearch() {
                           setSelectedCountryName(currentValue === selectedCountryName ? "" : currentValue)
                           setOpen(false)
                         }}
-                        className="py-3 px-6 cursor-pointer"
+                        className="py-4 px-6 cursor-pointer"
                       >
                         <Check className={cn("mr-2 h-4 w-4", selectedCountryName === country.name ? "opacity-100" : "opacity-0")} />
                         {country.name}

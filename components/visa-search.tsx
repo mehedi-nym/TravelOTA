@@ -70,7 +70,7 @@ export function VisaSearch() {
                 {selectedCountry ? selectedCountry : "Where do you want to go?"}
               </Button>
             </PopoverTrigger>
-            <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0 rounded-2xl overflow-hidden border-none shadow-xl" align="start">
+            <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0 rounded-2xl overflow-hidden border-none shadow-xl h-76" align="start">
               <Command>
                 <CommandInput placeholder="Type a country name..." className="h-12" />
                 <CommandList>
@@ -84,7 +84,7 @@ export function VisaSearch() {
                           setSelectedCountry(currentValue === selectedCountry ? "" : currentValue)
                           setOpen(false)
                         }}
-                        className="py-3 px-6 cursor-pointer"
+                        className="py-4 px-6 cursor-pointer"
                       >
                         <Check className={cn("mr-2 h-4 w-4", selectedCountry === country.name ? "opacity-100" : "opacity-0")} />
                         {country.name}
