@@ -1,372 +1,229 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Spinner } from '@/components/ui/spinner'
+import { Label } from '@/components/ui/label'
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import { Calendar } from "@/components/ui/calendar"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { format, addDays } from "date-fns"
+import { CalendarIcon, UserPlus, Users, ClipboardCheck, ArrowRight, ArrowLeft, UploadCloud } from 'lucide-react'
+import { cn } from "@/lib/utils"
 
-interface VisaRequirement {
-  id: string
-  field_name: string
-  field_type: string
-  field_label: string
-  is_required: boolean
-  options?: string
-  placeholder?: string
-  order_index: number
-}
-
-interface Country {
-  id: string
-  name: string
-}
-
-export default function VisaApplicationPage() {
+export default function VisaApplyPage() {
   const params = useParams()
-  const router = useRouter()
-  const [country, setCountry] = useState<Country | null>(null)
-  const [requirements, setRequirements] = useState<VisaRequirement[]>([])
-  const [formData, setFormData] = useState<Record<string, string | File[]>>({})
-  const [loading, setLoading] = useState(true)
-  const [submitting, setSubmitting] = useState(false)
-  const [user, setUser] = useState<any>(null)
+  const [step, setStep] = useState(1)
+  const [visa, setVisa] = useState<any>(null)
+  const [travellerCount, setTravellerCount] = useState(1)
+  const [travelDate, setTravelDate] = useState<Date>()
+  const [travellers, setTravellers] = useState<any[]>([{ id: 1, role: 'main', profession: 'job_holder', isSponsoring: 'no' }])
 
+  // Fetch Visa info for processing days and fee
   useEffect(() => {
-    checkUserAndFetchData()
-  }, [])
-
-  async function checkUserAndFetchData() {
-    try {
-      setLoading(true)
+    async function getVisa() {
       const supabase = createClient()
-
-      // Check if user is logged in
-      const {
-        data: { user: currentUser },
-      } = await supabase.auth.getUser()
-
-      if (!currentUser) {
-        router.push('/auth/login')
-        return
-      }
-
-      setUser(currentUser)
-
-      // Fetch country details
-      const { data: countryData, error: countryError } = await supabase
-        .from('countries')
-        .select('id, name')
-        .eq('id', params.id)
-        .single()
-
-      if (countryError) {
-        console.error('[v0] Error fetching country:', countryError)
-        router.push('/auth/login')
-        return
-      }
-
-      setCountry(countryData)
-
-      // Fetch visa requirements for this country
-      const { data: requirementsData, error: requirementsError } = await supabase
-        .from('visa_requirements')
-        .select('*')
-        .eq('country_id', params.id)
-        .order('order_index', { ascending: true })
-
-      if (requirementsError) {
-        console.error('[v0] Error fetching requirements:', requirementsError)
-      } else {
-        setRequirements(requirementsData || [])
-      }
-    } catch (error) {
-      console.error('[v0] Fetch error:', error)
-      router.push('/auth/login')
-    } finally {
-      setLoading(false)
+      const { data } = await supabase.from('visa_types').select('*').eq('id', params.id).single()
+      setVisa(data)
     }
-  }
+    getVisa()
+  }, [params.id])
 
-  const handleInputChange = (fieldName: string, value: string) => {
-    setFormData((prev) => ({
-      ...prev,
-      [fieldName]: value,
+  // Logic: Block dates during processing period [cite: 1, 4]
+  const minDate = visa ? addDays(new Date(), visa.visa_processing_days) : new Date()
+
+  const handleNext = () => setStep(step + 1)
+  const handleBack = () => setStep(step - 1)
+
+  const updateTravellerCount = (count: number) => {
+    setTravellerCount(count)
+    const newTravellers = Array.from({ length: count }, (_, i) => ({
+      id: i + 1,
+      role: i === 0 ? 'main' : 'additional',
+      profession: 'job_holder',
+      relationship: '',
+      isSponsoring: i === 0 ? 'no' : 'main_sponsoring'
     }))
+    setTravellers(newTravellers)
   }
 
-  const handleFileChange = (fieldName: string, files: FileList | null) => {
-    if (files) {
-      setFormData((prev) => ({
-        ...prev,
-        [fieldName]: Array.from(files),
-      }))
-    }
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setSubmitting(true)
-
-    try {
-      const supabase = createClient()
-
-      // Create visa application
-      const { data: applicationData, error: appError } = await supabase
-        .from('visa_applications')
-        .insert({
-          user_id: user.id,
-          country_id: params.id,
-          status: 'pending',
-          application_data: formData,
-        })
-        .select()
-        .single()
-
-      if (appError) {
-        console.error('[v0] Error creating application:', appError)
-        alert('Failed to submit application. Please try again.')
-        return
-      }
-
-      // Upload files if any
-      for (const [fieldName, value] of Object.entries(formData)) {
-        if (Array.isArray(value) && value.length > 0) {
-          const files = value as File[]
-          for (const file of files) {
-            const filePath = `${user.id}/${applicationData.id}/${fieldName}/${file.name}`
-            const { error: uploadError } = await supabase.storage
-              .from('visa-application-files')
-              .upload(filePath, file, { upsert: false })
-
-            if (uploadError) {
-              console.error('[v0] Error uploading file:', uploadError)
-            } else {
-              // Record file in database
-              await supabase.from('visa_application_files').insert({
-                application_id: applicationData.id,
-                field_name: fieldName,
-                file_path: filePath,
-                file_name: file.name,
-                file_size: file.size,
-                file_type: file.type,
-              })
-            }
-          }
-        }
-      }
-
-      alert('Application submitted successfully!')
-      router.push('/dashboard/applications')
-    } catch (error) {
-      console.error('[v0] Submit error:', error)
-      alert('An error occurred. Please try again.')
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  if (loading) {
-    return (
-      <main className="min-h-screen flex justify-center items-center">
-        <Spinner className="h-8 w-8" />
-      </main>
-    )
-  }
-
-  if (!country || !user) {
-    return (
-      <main className="min-h-screen">
-        <div className="max-w-4xl mx-auto px-4 py-12 text-center">
-          <p className="text-lg text-muted-foreground mb-4">
-            Unable to load application form
-          </p>
-          <Link href="/">
-            <Button>Back to Home</Button>
-          </Link>
-        </div>
-      </main>
-    )
-  }
+  if (!visa) return <div className="p-20 text-center">Loading Application...</div>
 
   return (
-    <main className="min-h-screen bg-background pb-12">
-      <div className="max-w-4xl mx-auto px-4 py-8">
-        <Link href={`/visa/${country.id}`}>
-          <Button variant="ghost" className="mb-6">
-            ← Back
-          </Button>
-        </Link>
+    <main className="min-h-screen bg-[#F8FAFC] pb-20">
+      <div className="max-w-4xl mx-auto px-6 pt-12">
+        
+        {/* Progress Indicator */}
+        <div className="flex items-center justify-between mb-12">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="flex items-center flex-1 last:flex-none">
+              <div className={cn("h-10 w-10 rounded-full flex items-center justify-center font-bold border-2 transition-all", 
+                step >= i ? "bg-[#14A7A2] border-[#14A7A2] text-white" : "bg-white border-slate-200 text-slate-400")}>
+                {i === 1 && <Users size={18} />}
+                {i === 2 && <UserPlus size={18} />}
+                {i === 3 && <ClipboardCheck size={18} />}
+              </div>
+              {i < 3 && <div className={cn("h-[2px] flex-1 mx-4", step > i ? "bg-[#14A7A2]" : "bg-slate-200")} />}
+            </div>
+          ))}
+        </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Apply for {country.name} Visa</CardTitle>
-            <CardDescription>
-              Please fill in all required fields to complete your visa application
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-6">
-              {requirements.length > 0 ? (
-                requirements.map((requirement) => (
-                  <div key={requirement.id} className="space-y-2">
-                    <label className="block text-sm font-medium">
-                      {requirement.field_label}
-                      {requirement.is_required && (
-                        <span className="text-destructive ml-1">*</span>
-                      )}
-                    </label>
+        {/* STEP 1: TRIP BASICS */}
+        {step === 1 && (
+          <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4">
+            <h1 className="text-3xl font-black italic uppercase tracking-tighter">Trip Details</h1>
+            <Card className="p-8 rounded-[2.5rem] border-none shadow-sm">
+              <div className="grid gap-8">
+                <div className="space-y-3">
+                  <Label className="text-sm font-black uppercase">How many people are travelling?</Label>
+                  <Input type="number" min="1" value={travellerCount} onChange={(e) => updateTravellerCount(parseInt(e.target.value))} className="h-14 rounded-2xl border-slate-100" />
+                </div>
 
-                    {requirement.field_type === 'text' && (
-                      <Input
-                        type="text"
-                        placeholder={requirement.placeholder}
-                        value={
-                          (formData[requirement.field_name] as string) || ''
-                        }
-                        onChange={(e) =>
-                          handleInputChange(
-                            requirement.field_name,
-                            e.target.value
-                          )
-                        }
-                        required={requirement.is_required}
-                      />
-                    )}
+                <div className="space-y-3">
+                  <Label className="text-sm font-black uppercase">Intended Date of Visit</Label>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button variant="outline" className={cn("w-full h-14 rounded-2xl justify-start text-left font-normal border-slate-100", !travelDate && "text-muted-foreground")}>
+                        <CalendarIcon className="mr-2 h-4 w-4" />
+                        {travelDate ? format(travelDate, "PPP") : <span>Pick a date</span>}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0 rounded-2xl">
+                      <Calendar mode="single" selected={travelDate} onSelect={setTravelDate} disabled={(date) => date < minDate} initialFocus />
+                    </PopoverContent>
+                  </Popover>
+                  <p className="text-[10px] text-[#14A7A2] font-bold italic uppercase">Earliest available date based on {visa.visa_processing_days} days processing.</p>
+                </div>
+              </div>
+            </Card>
+            <Button onClick={handleNext} className="w-full h-16 bg-black text-white rounded-full font-black text-lg">CONTINUE TO TRAVELLERS <ArrowRight className="ml-2" /></Button>
+          </div>
+        )}
 
-                    {requirement.field_type === 'email' && (
-                      <Input
-                        type="email"
-                        placeholder={requirement.placeholder}
-                        value={
-                          (formData[requirement.field_name] as string) || ''
-                        }
-                        onChange={(e) =>
-                          handleInputChange(
-                            requirement.field_name,
-                            e.target.value
-                          )
-                        }
-                        required={requirement.is_required}
-                      />
-                    )}
+        {/* STEP 2: DYNAMIC TRAVELLER FORMS */}
+        {step === 2 && (
+          <div className="space-y-10 animate-in fade-in slide-in-from-right-4">
+            <h1 className="text-3xl font-black italic uppercase tracking-tighter">Traveller Information</h1>
+            
+            {travellers.map((t, idx) => (
+              <Card key={t.id} className="p-10 rounded-[2.5rem] border-none shadow-sm space-y-8">
+                <div className="flex justify-between items-center border-b border-slate-50 pb-6">
+                  <h2 className="text-xl font-black uppercase italic">Traveller {idx + 1} {idx === 0 && "(Main Applicant)"}</h2>
+                  <div className="px-4 py-1 bg-slate-100 rounded-full text-[10px] font-black uppercase">{t.role}</div>
+                </div>
 
-                    {requirement.field_type === 'phone' && (
-                      <Input
-                        type="tel"
-                        placeholder={requirement.placeholder}
-                        value={
-                          (formData[requirement.field_name] as string) || ''
-                        }
-                        onChange={(e) =>
-                          handleInputChange(
-                            requirement.field_name,
-                            e.target.value
-                          )
-                        }
-                        required={requirement.is_required}
-                      />
-                    )}
+                {/* Common Fields  */}
+                <div className="grid md:grid-cols-2 gap-6">
+                  <div className="space-y-2"><Label>First Name</Label><Input className="h-12 rounded-xl" placeholder="As per passport" /></div>
+                  <div className="space-y-2"><Label>Last Name</Label><Input className="h-12 rounded-xl" placeholder="As per passport" /></div>
+                </div>
 
-                    {requirement.field_type === 'date' && (
-                      <Input
-                        type="date"
-                        value={
-                          (formData[requirement.field_name] as string) || ''
-                        }
-                        onChange={(e) =>
-                          handleInputChange(
-                            requirement.field_name,
-                            e.target.value
-                          )
-                        }
-                        required={requirement.is_required}
-                      />
-                    )}
-
-                    {requirement.field_type === 'file' && (
-                      <Input
-                        type="file"
-                        multiple
-                        onChange={(e) =>
-                          handleFileChange(requirement.field_name, e.target.files)
-                        }
-                        required={requirement.is_required}
-                      />
-                    )}
-
-                    {requirement.field_type === 'textarea' && (
-                      <Textarea
-                        placeholder={requirement.placeholder}
-                        value={
-                          (formData[requirement.field_name] as string) || ''
-                        }
-                        onChange={(e) =>
-                          handleInputChange(
-                            requirement.field_name,
-                            e.target.value
-                          )
-                        }
-                        required={requirement.is_required}
-                      />
-                    )}
-
-                    {requirement.field_type === 'dropdown' &&
-                      requirement.options && (
-                        <select
-                          value={
-                            (formData[requirement.field_name] as string) || ''
-                          }
-                          onChange={(e) =>
-                            handleInputChange(
-                              requirement.field_name,
-                              e.target.value
-                            )
-                          }
-                          required={requirement.is_required}
-                          className="w-full px-3 py-2 border border-border rounded-md bg-background"
-                        >
-                          <option value="">Select an option</option>
-                          {JSON.parse(requirement.options).map(
-                            (option: string) => (
-                              <option key={option} value={option}>
-                                {option}
-                              </option>
-                            )
-                          )}
-                        </select>
-                      )}
+                {/* Sponsorship Question (Only for Main)  */}
+                {idx === 0 && travellerCount > 1 && (
+                  <div className="p-6 bg-[#14A7A2]/5 rounded-3xl space-y-4">
+                    <Label className="font-bold">Are you sponsoring the other {travellerCount - 1} travellers? </Label>
+                    <RadioGroup defaultValue="no" onValueChange={(val) => {
+                       const newT = [...travellers];
+                       newT[0].isSponsoring = val;
+                       setTravellers(newT);
+                    }}>
+                      <div className="flex gap-4">
+                        <div className="flex items-center space-x-2"><RadioGroupItem value="yes" id="s-yes" /><Label htmlFor="s-yes">Yes, I am sponsoring</Label></div>
+                        <div className="flex items-center space-x-2"><RadioGroupItem value="no" id="s-no" /><Label htmlFor="s-no">No, they have their own funds</Label></div>
+                      </div>
+                    </RadioGroup>
                   </div>
-                ))
-              ) : (
-                <p className="text-muted-foreground text-center py-6">
-                  No specific requirements configured yet. Your application will be
-                  reviewed by our team.
-                </p>
-              )}
-
-              <Button
-                type="submit"
-                disabled={submitting}
-                className="w-full bg-primary hover:bg-primary/90 h-12"
-              >
-                {submitting ? (
-                  <>
-                    <Spinner className="h-4 w-4 mr-2" />
-                    Submitting...
-                  </>
-                ) : (
-                  'Submit Application'
                 )}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
+
+                {/* Relationship Trigger (Only for Additional)  */}
+                {idx > 0 && (
+                  <div className="space-y-2">
+                    <Label>Relationship to Main Traveller</Label>
+                    <select className="w-full h-12 rounded-xl border px-4" onChange={(e) => {
+                      const newT = [...travellers];
+                      newT[idx].relationship = e.target.value;
+                      setTravellers(newT);
+                    }}>
+                      <option value="">Select Relationship</option>
+                      <option value="spouse">Spouse</option>
+                      <option value="child">Child</option>
+                      <option value="parent">Parent</option>
+                    </select>
+                  </div>
+                )}
+
+                {/* Profession selection  */}
+                <div className="space-y-2">
+                   <Label>Profession </Label>
+                   <select className="w-full h-12 rounded-xl border px-4" onChange={(e) => {
+                      const newT = [...travellers];
+                      newT[idx].profession = e.target.value;
+                      setTravellers(newT);
+                   }}>
+                     <option value="job_holder">Job Holder</option>
+                     <option value="businessman">Businessman</option>
+                     <option value="student">Student</option>
+                   </select>
+                </div>
+              </Card>
+            ))}
+
+            <div className="flex gap-4">
+              <Button onClick={handleBack} variant="outline" className="h-16 flex-1 rounded-full font-black border-slate-200"><ArrowLeft className="mr-2" /> BACK</Button>
+              <Button onClick={handleNext} className="h-16 flex-2 rounded-full bg-black text-white font-black px-12">UPLOAD DOCUMENTS <ArrowRight className="ml-2" /></Button>
+            </div>
+          </div>
+        )}
+
+        {/* STEP 3: DYNAMIC DOCUMENT UPLOADS  */}
+        {step === 3 && (
+          <div className="space-y-10 animate-in fade-in slide-in-from-right-4">
+            <h1 className="text-3xl font-black italic uppercase tracking-tighter">Document Checklist</h1>
+            
+            {travellers.map((t, idx) => (
+              <Card key={t.id} className="p-10 rounded-[2.5rem] border-none shadow-sm space-y-8">
+                <h3 className="text-xl font-black uppercase italic">Documents for Traveller {idx + 1}</h3>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Universal Docs  */}
+                  <UploadBox label="Passport Copy (Scan)" />
+                  <UploadBox label="Photo (35mm x 45mm)" />
+
+                  {/* Profession-Specific  */}
+                  {t.profession === 'job_holder' && <UploadBox label="NOC Letter" />}
+                  {t.profession === 'businessman' && <UploadBox label="Trade License (Translated)" />}
+                  {t.profession === 'student' && <UploadBox label="School/College ID Card" />}
+
+                  {/* Financial (Only if sponsoring or individual)  */}
+                  {(t.role === 'main' || t.isSponsoring === 'no') && (
+                    <UploadBox label="6 Months Bank Statement & Solvency" />
+                  )}
+
+                  {/* Relationship Specific  */}
+                  {t.relationship === 'spouse' && <UploadBox label="Marriage Certificate" />}
+                </div>
+              </Card>
+            ))}
+
+            <Button className="w-full h-20 bg-[#14A7A2] text-white rounded-full font-black text-xl shadow-xl hover:scale-[1.02] transition-transform">
+              SUBMIT APPLICATION (৳{(visa.visa_fee * travellerCount).toLocaleString()})
+            </Button>
+          </div>
+        )}
       </div>
     </main>
+  )
+}
+
+function UploadBox({ label }: { label: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-slate-100 rounded-3xl hover:bg-white hover:border-[#14A7A2] transition-colors cursor-pointer group">
+      <UploadCloud className="text-slate-300 group-hover:text-[#14A7A2] mb-2" size={24} />
+      <span className="text-[10px] font-black uppercase text-slate-500 text-center">{label} </span>
+      <input type="file" className="hidden" />
+    </div>
   )
 }
