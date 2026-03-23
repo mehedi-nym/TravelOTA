@@ -3,7 +3,7 @@ import { useEffect, useRef } from "react"
 
 export function HeroSection() {
 
-  const videoRef = useRef(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
     if (videoRef.current) {

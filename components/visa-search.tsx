@@ -21,22 +21,23 @@ import {
 import { Spinner } from '@/components/ui/spinner'
 import { createClient } from '@/lib/supabase/client'
 
-interface VisaType {
+// 1. Updated Interface to match the new 'visas' table schema
+interface Visa {
   id: string
   name: string
   description: string
-  visa_processing_days: number
-  visa_fee: number
+  processing_days: string // Changed from visa_processing_days
+  fees: number           // Changed from visa_fee
   is_active: boolean
-  status_badge: string | null // New field from DB
-  visa_category: string 
+  status_badge: string | null
+  category: string        // Changed from visa_category
 }
 
 interface Country {
   id: string
   name: string
   code: string
-  visa_types: VisaType[]
+  visas: Visa[] // Changed relation name from visa_types
 }
 
 export function VisaSearch() {
@@ -48,32 +49,81 @@ export function VisaSearch() {
   const [hasSearched, setHasSearched] = useState(false)
 
   useEffect(() => {
-    async function fetchCountries() {
-      const supabase = createClient()
-      const { data } = await supabase
+  async function fetchCountries() {
+    const supabase = createClient()
+    
+
+    const { data, error } = await supabase
+      .from('countries')
+      .select(`
+        id,
+        name,
+        code,
+        visas (
+          id,
+          name,
+          description,
+          processing_days,
+          fees,
+          is_active,
+          status_badge,
+          category
+        )
+      `)
+      .eq('is_active', true)
+
+    if (error) {
+      console.error("Fetch error:", error)
+
+      const fallback = await supabase
         .from('countries')
         .select(`
-          id, name, code,
-          visa_types (
-            id, name, description, visa_processing_days, visa_fee, is_active, status_badge, visa_category
+          id,
+          name,
+          code,
+          visas (
+            id,
+            name,
+            description,
+            processing_days,
+            fees,
+            is_active,
+            status_badge,
+            category
           )
         `)
         .eq('is_active', true)
-      
-      setCountries(data || [])
-      setLoading(false)
+
+      setCountries(
+        (fallback.data || []).map(c => ({
+          ...c,
+          visas: c.visas || []
+        }))
+      )
+    } else {
+      setCountries(
+        (data || []).map(c => ({
+          ...c,
+          visas: c.visas || []
+        }))
+      )
     }
-    fetchCountries()
-  }, [])
+    console.log("COUNTRIES DATA:", data)
+    setLoading(false) 
+  }
+
+  fetchCountries()
+}, [])
 
   const handleSearch = () => {
     if (!selectedCountry) return
     setHasSearched(true)
-    const results = countries.filter(c => c.name === selectedCountry)
+    const results = countries.filter(c => c.name.toLowerCase() === selectedCountry.toLowerCase())
     setSearchResults(results)
   }
 
-  const activeVisaCards = searchResults.flatMap(c => c.visa_types.filter(v => v.is_active))
+  // 3. Updated mapping for flattened active visas
+  const activeVisaCards = searchResults.flatMap(c => c.visas?.filter(v => v.is_active) || [])
 
   if (loading) return <div className="flex justify-center py-20"><Spinner /></div>
 
@@ -128,9 +178,8 @@ export function VisaSearch() {
         </Button>
       </div>
 
-      {/* Grid Displaying Multiple Visa Cards per Country */}
+      {/* Results Display */}
       {hasSearched && activeVisaCards.length === 0 ? (
-        // THIS IS THE SORRY MESSAGE
         <div className="flex flex-col items-center justify-center py-20 text-center animate-in fade-in zoom-in duration-500">
           <div className="bg-slate-50 dark:bg-slate-900 p-6 rounded-[2.5rem] mb-6">
             <SearchX size={48} className="text-slate-300" />
@@ -145,15 +194,13 @@ export function VisaSearch() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 px-4 animate-in fade-in slide-in-from-bottom-5 duration-700">
           {searchResults.map((country) => (
-            country.visa_types
-              .filter(type => type.is_active) // Only show active visas
+            country.visas // 4. Updated map from visa_types to visas
+              ?.filter(v => v.is_active)
               .map((type) => (
                 <div key={type.id} className="group relative bg-white dark:bg-slate-950 rounded-[2.5rem] p-8 transition-all hover:shadow-2xl border border-slate-100/50 dark:border-slate-800/50 overflow-hidden">
                   
-                  {/* Top Accent Ring */}
-              <div className="absolute -top-12 -right-12 w-32 h-32 bg-primary/5 rounded-full group-hover:scale-150 transition-transform duration-700 z-0" />
+                  <div className="absolute -top-12 -right-12 w-32 h-32 bg-primary/5 rounded-full group-hover:scale-150 transition-transform duration-700 z-0" />
 
-                  {/* Dynamic Status Badge */}
                   {type.status_badge && (
                     <div className="absolute top-6 right-6 z-20">
                       <div className="flex items-center gap-1.5 px-3 py-1 bg-[#14A7A2]/10 border border-[#14A7A2]/20 rounded-full">
@@ -168,28 +215,28 @@ export function VisaSearch() {
                   <div className="relative z-10">
                     <div className="flex justify-between items-start mb-8">
                       <div className="space-y-1">
-                        <p className="text-[10px] font-bold tracking-[0.2em] text-[#14A7A2] uppercase">
-                          {type.name} {/* Specific Visa Name */}
+                        <p className="text-[15px] font-bold tracking-[0.2em] text-[#14A7A2] uppercase">
+                          {country.name}
                         </p>
-                        <h3 className="text-2xl md:text-3xl font-bold tracking-tighter leading-tight">{country.name}</h3>
+                        <h3 className="text-2xl pt-2 md:text-3xl font-bold tracking-tighter leading-tight">{type.name}</h3>
                       </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4 mb-10">
                       <div className="space-y-1">
                         <p className="text-[11px] text-muted-foreground flex items-center gap-1.5"><Clock size={12}/> Processing</p>
-                        <p className="font-bold text-sm tracking-tight">{type.visa_processing_days} Working Days</p>
+                        <p className="font-bold text-sm tracking-tight">{type.processing_days} Working Days</p>
                       </div>
                       <div className="space-y-1">
                         <p className="text-[11px] text-muted-foreground flex items-center gap-1.5"><ShieldCheck size={12}/> Category</p>
-                        <p className="font-bold text-sm tracking-tight">{type.visa_category}</p>
+                        <p className="font-bold text-sm tracking-tight">{type.category}</p>
                       </div>
                     </div>
 
                     <div className="flex items-end justify-between pt-6 border-t border-slate-50 dark:border-slate-900">
                       <div>
                         <p className="text-[10px] text-muted-foreground uppercase font-black tracking-[0.15em]">Total Fee</p>
-                        <p className="text-3xl font-black text-[#14A7A2] tracking-tighter">৳{type.visa_fee?.toLocaleString()}</p>
+                        <p className="text-3xl font-black text-[#14A7A2] tracking-tighter">৳{type.fees?.toLocaleString()}</p>
                       </div>
                       
                       <Link href={`/visa/${type.id}`} className="z-20">
