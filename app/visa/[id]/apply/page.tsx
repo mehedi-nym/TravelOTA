@@ -14,7 +14,6 @@ import {
   Info, Trash2, Calendar
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { format, addDays } from "date-fns"
 
 export default function VisaApplyPage() {
   const params = useParams()
@@ -123,7 +122,15 @@ const handleUpdateTraveller = (index: number, field: string, value: any) => {
 
   const validateStep = () => {
     if (step === 1) {
-      if (!travelDate || !returnDate) return !!toast.error("Please select travel and return dates");
+      if (!travelDate || !returnDate) {
+        toast.error("Please select travel and return dates");
+        return false;
+      }
+      
+      if (new Date(returnDate) <= new Date(travelDate)) {
+        toast.error("Return date must be after travel date");
+        return false;
+      }
     }
     if (step === 2 || step === 3) {
       for (let i = 0; i < travellerCount; i++) {
@@ -138,6 +145,8 @@ const handleUpdateTraveller = (index: number, field: string, value: any) => {
   };
 
   const submitApplication = async () => {
+    console.log("SUBMIT STARTED");
+    const orderId = 'OTA' + Date.now().toString().slice(-10);
     setIsSubmitting(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -147,6 +156,7 @@ const handleUpdateTraveller = (index: number, field: string, value: any) => {
       const { data: app, error: appErr } = await supabase
         .from('applications')
         .insert([{
+          order_id: orderId,
           user_id: user.id,
           visa_id: params.id,
           travel_date: travelDate,
@@ -154,7 +164,8 @@ const handleUpdateTraveller = (index: number, field: string, value: any) => {
           traveller_count: travellerCount,
           base_price_per_person: visa.fees,
           final_total_price: totalPrice,
-          status: 'pending'
+          status: 'pending',
+          payment_status: 'unpaid'
         }])
         .select()
         .single();
@@ -164,15 +175,33 @@ const handleUpdateTraveller = (index: number, field: string, value: any) => {
       // 2. Loop through Travellers and create Applicant + Documents
       for (let i = 0; i < travellerCount; i++) {
         const currentTraveller = travellers[i];
+        const {
+          full_name,
+          passport_number,
+          phone_number,
+          ...dynamicFields
+        } = currentTraveller;
         const { data: applicant, error: applicantErr } = await supabase
           .from('application_applicants')
           .insert([{
             application_id: app.id,
-            full_name: currentTraveller.full_name || 'Applicant',
-            passport_number: currentTraveller.passport_number || '',
-            profession: currentTraveller.profession,
-            answers_json: currentTraveller // Store all dynamic inputs
-          }])
+            // ✅ CORE FIELDS
+    full_name: full_name || 'Applicant',
+    passport_number: passport_number || '',
+    phone_number: phone_number || null,
+    profession: currentTraveller.profession,
+
+    // ✅ PRIMARY FLAG
+    is_primary: i === 0,
+
+    // ✅ SPONSOR STRUCTURE
+    is_sponsored: currentTraveller.sponsor_mode !== 'self',
+    sponsor_name: currentTraveller.sponsor_name || null,
+    sponsor_relationship: currentTraveller.sponsor_relationship || null,
+
+    // ✅ ONLY DYNAMIC DATA
+    answers_json: dynamicFields
+  }])
           .select()
           .single();
 
@@ -183,7 +212,7 @@ const handleUpdateTraveller = (index: number, field: string, value: any) => {
         for (const fileKey of applicantFiles) {
           const file = files[fileKey];
           const cleanKey = fileKey.split('-')[1];
-          const path = `apps/${app.id}/${applicant.id}/${Date.now()}-${file.name}`;
+          const path = `applications/${app.id}/${applicant.id}/${Date.now()}-${file.name}`;
           
           const { error: uploadErr } = await supabase.storage.from('documents').upload(path, file);
           if (uploadErr) throw uploadErr;
@@ -198,7 +227,7 @@ const handleUpdateTraveller = (index: number, field: string, value: any) => {
       }
 
       toast.success("Application successfully submitted!");
-      router.push('/dashboard/applications');
+      router.push(`/payment/${app.id}`);
     } catch (err: any) {
       toast.error(err.message);
     } finally {
