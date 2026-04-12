@@ -33,7 +33,7 @@ export default function VisaApplyPage() {
   
   // Step 2 & 3 State: Array of objects for each traveller
   const [travellers, setTravellers] = useState<any[]>([{ profession: 'job_holder' }])
-  const [files, setFiles] = useState<Record<string, File>>({})
+  const [files, setFiles] = useState<Record<string, { file: File; config_id: any; field_key: string }>>({})
   
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isConfirming, setIsConfirming] = useState(false)
@@ -112,13 +112,20 @@ const handleUpdateTraveller = (index: number, field: string, value: any) => {
   setTravellers(updated);
 };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, tIdx: number, key: string) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setFiles(prev => ({ ...prev, [`${tIdx}-${key}`]: file }));
-      toast.success(`${file.name} selected`);
-    }
-  };
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, tIdx: number, field: any) => {
+  const file = e.target.files?.[0];
+  if (file) {
+    setFiles(prev => ({
+      ...prev,
+      [`${tIdx}-${field.id}`]: {
+        file,
+        config_id: field.id,
+        field_key: field.field_key
+      }
+    }));
+    toast.success(`${file.name} selected`);
+  }
+};
 
   const validateStep = () => {
     if (step === 1) {
@@ -145,95 +152,132 @@ const handleUpdateTraveller = (index: number, field: string, value: any) => {
   };
 
   const submitApplication = async () => {
-    console.log("SUBMIT STARTED");
-    const orderId = 'OTA' + Date.now().toString().slice(-10);
-    setIsSubmitting(true);
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Please login to apply");
+  const orderId = 'OTA' + Date.now().toString().slice(-10);
+  setIsSubmitting(true);
 
-      // 1. Create Main Application Record
-      const { data: app, error: appErr } = await supabase
-        .from('applications')
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("Please login to apply");
+
+    // 1. CREATE MAIN APPLICATION
+    const { data: app, error: appErr } = await supabase
+      .from('applications')
+      .insert([{
+        order_id: orderId,
+        user_id: user.id,
+        visa_id: params.id,
+        travel_date: travelDate,
+        return_date: returnDate,
+        traveller_count: travellerCount,
+        base_price_per_person: visa.fees,
+        final_total_price: totalPrice,
+        status: 'pending',
+        payment_status: 'unpaid'
+      }])
+      .select()
+      .single();
+
+    if (appErr) throw appErr;
+
+    // 2. LOOP TRAVELLERS
+    for (let i = 0; i < travellerCount; i++) {
+      const currentTraveller = travellers[i];
+
+      // 🔹 FIXED FIELDS
+      const fixedFields = {
+        full_name: currentTraveller.full_name || 'Applicant',
+        passport_number: currentTraveller.passport_number || '',
+        phone_number: currentTraveller.phone_number || null,
+        profession: currentTraveller.profession,
+        is_primary: i === 0
+      };
+
+      // 🔹 META FIELDS
+      const metaFields = {
+        sponsor_mode: currentTraveller.sponsor_mode,
+        sponsor_name: currentTraveller.sponsor_name,
+        sponsor_relationship: currentTraveller.sponsor_relationship,
+        has_travelled_before: currentTraveller.has_travelled_before
+      };
+
+      // 🔹 BUILD DYNAMIC ANSWERS JSON (for quick read)
+      const dynamicAnswers: Record<string, any> = {};
+
+      const step2Fields = formConfig.filter(f => f.step_number === 2);
+
+      step2Fields.forEach(field => {
+        dynamicAnswers[field.field_key] = currentTraveller[field.field_key] || null;
+      });
+
+      // 3. INSERT APPLICANT
+      const { data: applicant, error: applicantErr } = await supabase
+        .from('application_applicants')
         .insert([{
-          order_id: orderId,
-          user_id: user.id,
-          visa_id: params.id,
-          travel_date: travelDate,
-          return_date: returnDate,
-          traveller_count: travellerCount,
-          base_price_per_person: visa.fees,
-          final_total_price: totalPrice,
-          status: 'pending',
-          payment_status: 'unpaid'
+          application_id: app.id,
+
+          ...fixedFields,
+
+          is_sponsored: metaFields.sponsor_mode !== 'self',
+          sponsor_name: metaFields.sponsor_name || null,
+          sponsor_relationship: metaFields.sponsor_relationship || null,
+
+          has_travelled_before: metaFields.has_travelled_before || false,
+
+          meta_json: metaFields,           // ✅ new structured meta
+          answers_json: dynamicAnswers    // ✅ quick access
         }])
         .select()
         .single();
 
-      if (appErr) throw appErr;
+      if (applicantErr) throw applicantErr;
 
-      // 2. Loop through Travellers and create Applicant + Documents
-      for (let i = 0; i < travellerCount; i++) {
-        const currentTraveller = travellers[i];
-        const {
-          full_name,
-          passport_number,
-          phone_number,
-          ...dynamicFields
-        } = currentTraveller;
-        const { data: applicant, error: applicantErr } = await supabase
-          .from('application_applicants')
-          .insert([{
-            application_id: app.id,
-            // ✅ CORE FIELDS
-    full_name: full_name || 'Applicant',
-    passport_number: passport_number || '',
-    phone_number: phone_number || null,
-    profession: currentTraveller.profession,
-
-    // ✅ PRIMARY FLAG
-    is_primary: i === 0,
-
-    // ✅ SPONSOR STRUCTURE
-    is_sponsored: currentTraveller.sponsor_mode !== 'self',
-    sponsor_name: currentTraveller.sponsor_name || null,
-    sponsor_relationship: currentTraveller.sponsor_relationship || null,
-
-    // ✅ ONLY DYNAMIC DATA
-    answers_json: dynamicFields
-  }])
-          .select()
-          .single();
-
-        if (applicantErr) throw applicantErr;
-
-        // 3. Upload and record files for this applicant
-        const applicantFiles = Object.keys(files).filter(k => k.startsWith(`${i}-`));
-        for (const fileKey of applicantFiles) {
-          const file = files[fileKey];
-          const cleanKey = fileKey.split('-')[1];
-          const path = `applications/${app.id}/${applicant.id}/${Date.now()}-${file.name}`;
-          
-          const { error: uploadErr } = await supabase.storage.from('documents').upload(path, file);
-          if (uploadErr) throw uploadErr;
-
-          await supabase.from('applicant_documents').insert([{
-            applicant_id: applicant.id,
-            field_key: cleanKey,
-            file_url: path,
-            file_name: file.name
-          }]);
-        }
+      // 4. INSERT NORMALIZED ANSWERS (🔥 MAIN ENGINE)
+      for (const field of step2Fields) {
+        await supabase.from('applicant_answers').insert([{
+          applicant_id: applicant.id,
+          config_id: field.id,
+          field_key: field.field_key,
+          value: currentTraveller[field.field_key] || null
+        }]);
       }
 
-      toast.success("Application successfully submitted!");
-      router.push(`/payment/${app.id}`);
-    } catch (err: any) {
-      toast.error(err.message);
-    } finally {
-      setIsSubmitting(false);
+      // 5. HANDLE FILE UPLOADS (STEP 3)
+      const applicantFiles = Object.keys(files).filter(k => k.startsWith(`${i}-`));
+
+      for (const fileKey of applicantFiles) {
+        const fileObj = files[fileKey]; // { file, config_id, field_key }
+
+        const path = `applications/${app.id}/${applicant.id}/${Date.now()}-${fileObj.file.name}`;
+
+        // Upload to storage
+        const { error: uploadErr } = await supabase
+          .storage
+          .from('documents')
+          .upload(path, fileObj.file);
+
+        if (uploadErr) throw uploadErr;
+
+        // Save DB record
+        await supabase.from('applicant_documents').insert([{
+          applicant_id: applicant.id,
+          config_id: fileObj.config_id,
+          field_key: fileObj.field_key,
+          file_url: path,
+          file_name: fileObj.file.name
+        }]);
+      }
     }
-  };
+
+    toast.success("Application successfully submitted!");
+    router.push(`/payment/${app.id}`);
+
+  } catch (err: any) {
+    console.error(err);
+    toast.error(err.message || "Something went wrong");
+  } finally {
+    setIsSubmitting(false);
+  }
+};
 
   if (loading) return <div className="flex justify-center py-40"><Loader2 className="animate-spin text-[#14A7A2]" size={48} /></div>
 
@@ -624,7 +668,7 @@ const handleUpdateTraveller = (index: number, field: string, value: any) => {
                             <span className="text-[10px] font-black uppercase text-slate-500">Upload File</span>
                           </>
                         )}
-                        <input type="file" className="hidden" onChange={(e) => handleFileUpload(e, tIdx, field.field_key)} />
+                        <input type="file" className="hidden" onChange={(e) => handleFileUpload(e, tIdx, field)} />
                       </label>
                     </div>
                   ))}
